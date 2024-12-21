@@ -1,0 +1,553 @@
+# Install scrapy 
+$ pip install scrapy
+
+#### Part 1 ####
+Objectives: 
+    - Creating Our Scrapy Spider
+    - Using Scrapy Shell To Find Our CSS Selectors
+    - Adding CSS Selectors To Spider
+    - How to Run Our Scrapy Spider
+    - How to Navigate Through Pages
+
+# To start the project 
+$ scrapy startproject <projectname>
+
+# To generate spider 
+$ scrapy genspider <spider_name> <url_to_crawl>
+
+# Using interactive python 
+- Install ipython (pip install ipython)
+- add: "$ shell = ipython" in settings.cfg [settings]
+
+
+# Access shell 
+$ scrapy shell (in terminal)
+
+
+# fetch(url) Fetch URL and put all htmls into a "response" variable
+    response = fetch("https://books.toscrape.com/")
+
+# response.css(<selelctor>)
+    Example: response.css("article.product_pod")
+    This will use "article" html tag and "product_pd" class.
+    It will get all the html tags under "article.product_pd".
+    It gives 20 to be precise for the url: books.toscrape.com since it has 20 books 
+    in first page of that website. 
+
+# How about grabbing price or name of book?
+    books = response.css("article.product_pod")
+    book = books[0]
+    book.css('.product_price .price_color::text).get()
+
+    book.css("h3 a::text").get() # Gets title of text
+
+# Let's grab href
+    book.css('h3 a').attrib['href']
+    Out: 'catalogue/a-light-in-the-attic_1000/index.html'
+
+# Let's put what we have learn in the bookspider.py parse function which helps to extract book name, price and link 
+        
+        def parse(self, response):
+        books = response.css("article.product_pod")
+        for book in books:
+            yield {
+                "title": book.css("h3 a::text").get(),
+                "price": book.css(".product price .price_color::text").get(),
+                "url": book.css("h3 a").attrib["href"],
+            }
+# Now let's crawl page by page and extract title, price and url. 
+
+    # Let's try in shell first then later we will update parse function. 
+
+    response.css("li.next a ::attr(href)").get()
+    Out[2]: 'catalogue/page-2.html'
+
+ Now update the parse function : 
+    def parse(self, response):
+        books = response.css("article.product_pod")
+        for book in books:
+            yield {
+                "title": book.css("h3 a::text").get(),
+                "price": book.css(".product price .price_color::text").get(),
+                "url": book.css("h3 a").attrib["href"],
+            }
+        next_page = response.css("li.next a::attr(href)").get()
+        if next_page is not None:
+            # Some page have catalogue/ in the url, so we need to check if it is already in the url
+            if "catalogue" in next_page:
+                next_page_url = 'https://books.toscrape.com/'+next_page
+            else:
+                next_page_url = 'https://books.toscrape.com/catalogue/'+next_page
+            yield response.follow(next_page_url, callback=self.parse)
+    To run the spider, first go to spider folder then "spider crawl bookspider" bookspider <-- spider name 
+
+
+#### Part 2 ####
+    We go through how to create a more advanced Scrapy spider that will crawl the entire BooksToScrape.com 
+    website and scrape the data from each individual book page.
+
+    def parse(self, response):
+        # Let's grab all the books on the page
+        books = response.css("article.product_pod")
+
+        # Let's iterate over all the books
+        for book in books:
+            # Let's grab the book url 
+            relative_url = book.css('h3 a ::attr(href)').get()
+
+            # Some page have catalogue/ in the url, so we need to check if it is already in the url
+            if "catalogue/" in relative_url:
+                book_url = 'https://books.toscrape.com/' + relative_url
+            else:
+                book_url = 'https://books.toscrape.com/catalogue/' + relative_url
+
+            yield response.follow(book_url, callback=self.parse_book_page)
+        
+        
+        # After completing the current page, we need to check if there is a next page
+        # If there is a next page, we will got to the page and call the parse function again
+
+        # next_page = response.css("li.next a::attr(href)").get()
+        # if next_page is not None:
+        #     if 'catalogue/' in next_page:
+        #         next_page_url = 'https://books.toscrape.com/' + next_page
+        #     else:
+        #         next_page_url = 'https://books.toscrape.com/catalogue/' + next_page
+
+        #     yield response.follow(next_page_url, callback=self.parse)
+        
+
+    def parse_book_page(self, response):
+
+        # Let's grab the table rows
+        table_rows = response.css("table tr")
+        
+        yield {
+            'url': response.url,
+            'title': response.css(".product_main h1::text").get(),
+            'product_type': table_rows[1].css("td::text").get(),
+            'price_excl_tax': table_rows[2].css("td::text").get(),
+            'price_incl_tax': table_rows[3].css("td::text").get(),
+            'tax': table_rows[4].css("td::text").get(),
+            'availability': table_rows[5].css("td::text").get(),
+            'number_of_reviews': table_rows[6].css("td::text").get(),
+            'star_rating': response.css("p.star-rating").attrib['class'],
+            'category': response.xpath('//ul[@class="breadcrumb"]/li[@class="active"]/preceding-sibling::li[1]/a/text()').get(),
+            'description': response.xpath("//div[@id='product_description']/following-sibling::p[1]/text()").get(),
+            'price': response.css(".price_color::text").get(),
+        }
+    # Terminal command to run: 
+        $ scarpy crawl bookspider -O book-data.json
+
+
+#### Part - 3 ### 
+Structuring data with scrapy items 
+Cleaning the data with scrapy pipelines. 
+
+## Items 
+When we create the scrapy projects item.py file is also created. Items helps us to define what we want 
+in a data that we're scraping. For example, here in the code below we have just yield the different pieces 
+of data we're extracting from the page. This is fine but in to do the further processing using pipelines it 
+is better to define fields for the items like below. 
+
+        def parse_book_page(self, response):
+
+        # Let's grab the table rows
+        table_rows = response.css("table tr")
+        
+        yield {
+            'url': response.url,
+            'title': response.css(".product_main h1::text").get(),
+            'product_type': table_rows[1].css("td::text").get(),
+            'price_excl_tax': table_rows[2].css("td::text").get(),
+            'price_incl_tax': table_rows[3].css("td::text").get(),
+            'tax': table_rows[4].css("td::text").get(),
+            'availability': table_rows[5].css("td::text").get(),
+            'number_of_reviews': table_rows[6].css("td::text").get(),
+            'star_rating': response.css("p.star-rating").attrib['class'],
+            'category': response.xpath('//ul[@class="breadcrumb"]/li[@class="active"]/preceding-sibling::li[1]/a/text()').get(),
+            'description': response.xpath("//div[@id='product_description']/following-sibling::p[1]/text()").get(),
+            'price': response.css(".price_color::text").get(),
+        }
+
+This is how we define the fields in items.py as below. These fields will be columns later in database. 
+
+        class BookItem(scrapy.Item):
+            url = scrapy.Field()
+            title = scrapy.Field()
+            upc = scrapy.Field()
+            product_type = scrapy.Field()
+            price_excl_tax = scrapy.Field()
+            price_incl_tax = scrapy.Field()
+            tax = scrapy.Field()
+            availability = scrapy.Field()
+            num_reviews = scrapy.Field()
+            stars = scrapy.Field()
+            category = scrapy.Field()
+            description = scrapy.Field()
+            price = scrapy.Field()
+
+    What is benefit of doing this? If helps in validation while writing data to database. 
+
+# Note: "BookItem" class has to be imported in the spider you make to use it and should be instantiated in this way: 
+        ddef parse_book_page(self, response):
+
+        # Let's grab the table rows
+        table_rows = response.css("table tr")
+
+        # Let's create a BookItem object
+        book_item = BookItem()
+
+        book_item['url']= response.url,
+        book_item['title']= response.css(".product_main h1::text").get(),
+        book_item['upc'] = table_rows[0].css("td::text").get(),
+        book_item['product_type']= table_rows[1].css("td::text").get(),
+        book_item['price_excl_tax']= table_rows[2].css("td::text").get(),
+        book_item['price_incl_tax']= table_rows[3].css("td::text").get(),
+        book_item['tax']= table_rows[4].css("td::text").get(),
+        book_item['availability']= table_rows[5].css("td::text").get(),
+        book_item['num_reviews']= table_rows[6].css("td::text").get(),
+        book_item['stars']= response.css("p.star-rating").attrib['class'],
+        book_item['category']= response.xpath('//ul[@class="breadcrumb"]/li[@class="active"]/preceding-sibling::li[1]/a/text()').get(),
+        book_item['description']= response.xpath("//div[@id='product_description']/following-sibling::p[1]/text()").get(),
+        book_item['price']= response.css(".price_color::text").get(),
+        
+        yield book_item
+
+## Pipelines
+This simply preprocess the data before writing. To do so need to modfiy the pipelines.py file. 
+This is the preprocess pipelines defined in the class BookscraperPipeline. 
+
+        class BookscraperPipeline:
+            def process_item(self, item, spider):
+
+                adapter = ItemAdapter(item)
+
+                ## Strip all whitespaces from strings
+                field_names = adapter.field_names()
+                for field_name in field_names:
+                    if field_name != 'description':
+                        value = adapter.get(field_name)
+                        adapter[field_name] = value[0].strip()
+
+
+                ## Category & Product Type --> switch to lowercase
+                lowercase_keys = ['category', 'product_type']
+                for lowercase_key in lowercase_keys:
+                    value = adapter.get(lowercase_key)
+                    adapter[lowercase_key] = value.lower()
+
+
+
+                ## Price --> convert to float
+                price_keys = ['price', 'price_excl_tax', 'price_incl_tax', 'tax']
+                for price_key in price_keys:
+                    value = adapter.get(price_key)
+                    adapter[price_key] = float(value.replace('£', ''))
+
+
+                ## Availability --> extract number of books in stock
+                availability_string = adapter.get('availability')
+                split_string_array = availability_string.split('(')
+                if len(split_string_array) < 2:
+                    adapter['availability'] = 0
+                else:
+                    availability_array = split_string_array[1].split(' ')
+                    adapter['availability'] = int(availability_array[0])
+
+
+
+                ## Reviews --> convert string to number
+                num_reviews_string = adapter.get('num_reviews')
+                adapter['num_reviews'] = int(num_reviews_string)
+
+
+                ## Stars --> convert text to number
+                stars_string = adapter.get('stars')
+                split_stars_array = stars_string.split(' ')
+                stars_text_value = split_stars_array[1].lower()
+                if stars_text_value == "zero":
+                    adapter['stars'] = 0
+                elif stars_text_value == "one":
+                    adapter['stars'] = 1
+                elif stars_text_value == "two":
+                    adapter['stars'] = 2
+                elif stars_text_value == "three":
+                    adapter['stars'] = 3
+                elif stars_text_value == "four":
+                    adapter['stars'] = 4
+                elif stars_text_value == "five":
+                    adapter['stars'] = 5
+
+
+                return item
+
+Now finally we will uncomment 
+#ITEM_PIPELINES = {
+#    "bookscraper.pipelines.BookscraperPipeline": 300,
+#}
+
+in Configure item pipelines in settings.py
+
+
+#### Part-4 ####
+We go through how to save our scraped data to CSV files and MySQL & Postgres databases.
+
+# Save data by writing to a file but append
+
+    $ scrapy crawl <spider_name> -o <field_name>
+    Example:
+    $ scrapy crawl bookspider -o clean-data.csv or json
+
+# Save data using settings.py file
+
+    In file simply add: 
+
+    FEEDS  = {
+    'booksdata.csv': {'format': 'csv'},
+}
+
+    # We can overtwrite FEEDS by defining custom FEEDS in the the spider file name in our case filename is bookspider.py
+    
+    # To overwrite feeds
+    custom_settings = {
+        'FEEDS': {
+            'booksdata.json': {'format': 'json', 'overwrite': True},
+        }
+    }
+
+# Save scraped data in the PostgreSQL database. 
+
+    - First create databse with some database name 
+    - Modify add the below code on the pipelines.py
+        import psycopg2
+
+        class SaveToPostgresPipeline:
+
+            def __init__(self):
+                ## Connection Details
+                hostname = 'localhost'
+                username = 'YOUR_USERNAME_HERE'
+                password = 'YOUR_PASSWORD_HERE' # your password
+                database = 'YOUR_DATABASE_NAME_HERE'
+
+                ## Create/Connect to database
+                self.connection = psycopg2.connect(host=hostname, user=username, password=password, dbname=database)
+                
+                ## Create cursor, used to execute commands
+                self.cur = self.connection.cursor()
+                
+                ## Create books table if none exists
+                self.cur.execute("""
+                CREATE TABLE IF NOT EXISTS books(
+                    id serial PRIMARY KEY, 
+                    url VARCHAR(255),
+                    title text,
+                    upc VARCHAR(255),
+                    product_type VARCHAR(255),
+                    price_excl_tax DECIMAL,
+                    price_incl_tax DECIMAL,
+                    tax DECIMAL,
+                    price DECIMAL,
+                    availability INTEGER,
+                    num_reviews INTEGER,
+                    stars INTEGER,
+                    category VARCHAR(255),
+                    description text
+                )
+                """)
+
+            def process_item(self, item, spider):
+
+                ## Define insert statement
+                self.cur.execute(""" insert into books (
+                    url, 
+                    title, 
+                    upc, 
+                    product_type, 
+                    price_excl_tax,
+                    price_incl_tax,
+                    tax,
+                    price,
+                    availability,
+                    num_reviews,
+                    stars,
+                    category,
+                    description
+                    ) values (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                        )""", (
+                    item["url"],
+                    item["title"],
+                    item["upc"],
+                    item["product_type"],
+                    item["price_excl_tax"],
+                    item["price_incl_tax"],
+                    item["tax"],
+                    item["price"],
+                    item["availability"],
+                    item["num_reviews"],
+                    item["stars"],
+                    item["category"],
+                    item["description"]
+                ))
+
+                for key, value in item.items():
+                    print(f"{key}: {value} (type: {type(value)})")
+
+                ## Execute insert of data into database
+                self.connection.commit()
+                return item
+
+            def close_spider(self, spider):
+
+                ## Close cursor & connection to database 
+                self.cur.close()
+                self.connection.close()
+
+    - In settings.py modify ITEM_PIPELINES as 
+                ITEM_PIPELINES = {
+            "bookscraper.pipelines.BookscraperPipeline": 300,
+            "bookscraper.pipelines.SaveToPostgresPipeline": 400,
+            }
+        The number 300, 400 are the order in which the pipelines gets executed. 
+
+#### Part-5 ###
+ - Why we get blocked when web scraping 
+ - Explaning and using user agents to bypass getting blocked
+ - Explaning and using request headers to bypass getting blocked
+
+We get blocked because website can track  our ip and request headers when we are scraping their website and  the website might not allow us
+to get their data being scraped. 
+
+Then how how do we scrape such website to get the data? In order to do so we need to dynamically change the request headers or only user agent
+to deceive the website. So, now, the website can think everytime we send the request it is from new user. 
+
+How do we do this in scarpy? 
+- First we will get the fake user agent generators like from webiste: scrapeops.io 
+    - To do this we need to get the following things from the webiste and add this in the settings.py as given below
+
+    SCRAPEOPS_API_KEY = 'YOUR_API_KEY_HERE' # signup at https://scrapeops.io
+    SCRAPEOPS_FAKE_USER_AGENT_ENDPOINT = 'https://headers.scrapeops.io/v1/user-agents'
+    SCRAPEOPS_FAKE_USER_AGENT_ENABLED = True
+    SCRAPEOPS_NUM_RESULTS = 5
+
+- Then we create the class in the middlewares.py to properly use that fake user agent or request headers
+
+- For fake user agent the class is defined as: 
+    # Class to get fake user agents from ScrapeOps API
+    class ScrapeOpsFakeUserAgentMiddleware:
+
+        @classmethod
+        def from_crawler(cls, crawler):
+            return cls(crawler.settings)
+
+        def __init__(self, settings):
+            self.scrapeops_api_key = settings.get('SCRAPEOPS_API_KEY')
+            self.scrapeops_endpoint = settings.get('SCRAPEOPS_FAKE_USER_AGENT_ENDPOINT', 'http://headers.scrapeops.io/v1/user-agents?') 
+            self.scrapeops_fake_user_agents_active = settings.get('SCRAPEOPS_FAKE_USER_AGENT_ENABLED', False)
+            self.scrapeops_num_results = settings.get('SCRAPEOPS_NUM_RESULTS')
+            self.headers_list = []
+            self._get_user_agents_list()
+            self._scrapeops_fake_user_agents_enabled()
+
+
+        def _get_user_agents_list(self):
+            payload = {'api_key': self.scrapeops_api_key}
+            if self.scrapeops_num_results is not None:
+                payload['num_results'] = self.scrapeops_num_results
+            response = requests.get(self.scrapeops_endpoint, params=urlencode(payload))
+            json_response = response.json()
+            self.user_agents_list = json_response.get('result', [])
+
+
+        def _get_random_user_agent(self):
+            random_index = randint(0, len(self.user_agents_list) - 1)
+            return self.user_agents_list[random_index]
+
+        def _scrapeops_fake_user_agents_enabled(self):
+            if self.scrapeops_api_key is None or self.scrapeops_api_key == '' or self.scrapeops_fake_user_agents_active == False:
+                self.scrapeops_fake_user_agents_active = False
+            else:
+                self.scrapeops_fake_user_agents_active = True
+
+        def process_request(self, request, spider):        
+            random_user_agent = self._get_random_user_agent()
+            request.headers['User-Agent'] = random_user_agent
+
+            print("************ NEW HEADER ATTACHED *******")
+            print(request.headers['User-Agent'])
+
+    - To enable this class change the settings.py as 
+        DOWNLOADER_MIDDLEWARES = {
+            # 'bookscraper.middlewares.BookscraperDownloaderMiddleware': 543,
+            'bookscraper.middlewares.ScrapeOpsFakeUserAgentMiddleware': 400,
+        }
+
+- For Fake Browser headers agent we define class in this way:
+        class ScrapeOpsFakeBrowserHeaderAgentMiddleware:
+
+            @classmethod
+            def from_crawler(cls, crawler):
+                return cls(crawler.settings)
+
+            def __init__(self, settings):
+                self.scrapeops_api_key = settings.get('SCRAPEOPS_API_KEY')
+                self.scrapeops_endpoint = settings.get('SCRAPEOPS_FAKE_BROWSER_HEADER_ENDPOINT', 'http://headers.scrapeops.io/v1/browser-headers') 
+                self.scrapeops_fake_browser_headers_active = settings.get('SCRAPEOPS_FAKE_BROWSER_HEADER_ENABLED', True)
+                self.scrapeops_num_results = settings.get('SCRAPEOPS_NUM_RESULTS')
+                self.headers_list = []
+                self._get_headers_list()
+                self._scrapeops_fake_browser_headers_enabled()
+
+            def _get_headers_list(self):
+                payload = {'api_key': self.scrapeops_api_key}
+                if self.scrapeops_num_results is not None:
+                    payload['num_results'] = self.scrapeops_num_results
+                response = requests.get(self.scrapeops_endpoint, params=urlencode(payload))
+                json_response = response.json()
+                self.headers_list = json_response.get('result', [])
+
+            def _get_random_browser_header(self):
+                random_index = randint(0, len(self.headers_list) - 1)
+                return self.headers_list[random_index]
+
+            def _scrapeops_fake_browser_headers_enabled(self):
+                if self.scrapeops_api_key is None or self.scrapeops_api_key == '' or self.scrapeops_fake_browser_headers_active == False:
+                    self.scrapeops_fake_browser_headers_active = False
+                else:
+                    self.scrapeops_fake_browser_headers_active = True
+            
+            def process_request(self, request, spider):        
+                random_browser_header = self._get_random_browser_header()
+
+                request.headers['accept-language'] = random_browser_header['accept-language']
+                request.headers['sec-fetch-user'] = random_browser_header['sec-fetch-user'] 
+                request.headers['sec-fetch-mod'] = random_browser_header['sec-fetch-mod'] 
+                request.headers['sec-fetch-site'] = random_browser_header['sec-fetch-site'] 
+                request.headers['sec-ch-ua-platform'] = random_browser_header['sec-ch-ua-platform'] 
+                request.headers['sec-ch-ua-mobile'] = random_browser_header['sec-ch-ua-mobile'] 
+                request.headers['sec-ch-ua'] = random_browser_header['sec-ch-ua'] 
+                request.headers['accept'] = random_browser_header['accept'] 
+                request.headers['user-agent'] = random_browser_header['user-agent'] 
+                request.headers['upgrade-insecure-requests'] = random_browser_header.get('upgrade-insecure-requests')
+            
+
+                print("************ NEW HEADER ATTACHED *******")
+                print(request.headers)
+
+
+
+
